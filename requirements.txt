@@ -1,0 +1,41 @@
+# Core training stack
+#
+# Install the PyTorch build matching your accelerator/driver first when needed
+# (especially for ROCm or a specific CUDA version).
+torch>=2.7
+
+# Qwen3.5 is supported in current Transformers 5.x.
+transformers==5.15.1
+accelerate>=1.10
+
+# Dataset code under src/jd/tasks/maze/ uses Hugging Face datasets.
+datasets>=3.3
+
+# Jacobian Descent / UPGrad.
+# The extra installs the quadratic-programming projector dependencies required
+# by UPGrad and DualProj.
+torchjd[quadprog_projector]==0.17.0
+
+# Useful for numerical utilities and tests.
+numpy>=1.26
+pytest>=8.0
+
+# Optional but recommended later for parameter-efficient JD/GRPO fine-tuning.
+# Keeping the trainable parameter set small is useful when storing multiple
+# objective gradients/Jacobians.
+peft>=0.19
+
+# Do NOT add vLLM or SGLang yet. They are inference/serving engines and are not
+# needed for the initial in-process on-policy training loop.
+#
+# Optional Qwen3.5 Gated-DeltaNet acceleration should be installed separately
+# for the correct hardware backend, e.g.:
+#
+#   CUDA:
+#       pip install "flash-linear-attention[cuda]"
+#
+#   ROCm:
+#       install the matching ROCm PyTorch wheel first, then:
+#       pip install "flash-linear-attention[rocm]"
+#
+# Qwen3.5 has a PyTorch fallback if these optional kernels are unavailable.
