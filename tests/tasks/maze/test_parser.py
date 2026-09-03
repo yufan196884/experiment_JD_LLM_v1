@@ -1,5 +1,5 @@
 from jd.tasks.maze.parser import (
-    has_valid_route_format,
+    has_parsable_route,
     parse_moves,
     parse_route,
 )
@@ -140,7 +140,7 @@ def test_invalid_move_invalidates_completion():
 # Exact output-format enforcement
 # =============================================================================
 
-def test_text_before_route_is_invalid():
+def test_text_before_route_is_allowed():
     completion = """
     Here is the best route:
 
@@ -149,12 +149,14 @@ def test_text_before_route_is_invalid():
     </route>
     """
 
-    assert parse_route(
-        completion
-    ) is None
+    assert parse_route(completion) == [
+        "UP",
+        "RIGHT",
+        "DOWN",
+    ]
 
 
-def test_text_after_route_is_invalid():
+def test_text_after_route_is_allowed():
     completion = """
     <route>
     UP RIGHT DOWN
@@ -163,12 +165,14 @@ def test_text_after_route_is_invalid():
     This route avoids lava.
     """
 
-    assert parse_route(
-        completion
-    ) is None
+    assert parse_route(completion) == [
+        "UP",
+        "RIGHT",
+        "DOWN",
+    ]
 
 
-def test_multiple_routes_are_invalid():
+def test_multiple_routes_uses_first_route():
     completion = """
     <route>
     UP RIGHT
@@ -179,9 +183,10 @@ def test_multiple_routes_are_invalid():
     </route>
     """
 
-    assert parse_route(
-        completion
-    ) is None
+    assert parse_route(completion) == [
+        "UP",
+        "RIGHT",
+    ]
 
 
 def test_old_numbered_route_format_is_invalid():
@@ -200,25 +205,25 @@ def test_old_numbered_route_format_is_invalid():
 # Convenience format checker
 # =============================================================================
 
-def test_has_valid_route_format():
+def test_has_parsable_route():
     completion = """
     <route>
     UP RIGHT DOWN LEFT
     </route>
     """
 
-    assert has_valid_route_format(
+    assert has_parsable_route(
         completion
     )
 
 
-def test_has_valid_route_format_rejects_invalid_completion():
+def test_has_parsable_route_rejects_invalid_completion():
     completion = """
     <route>
     UP TELEPORT RIGHT
     </route>
     """
 
-    assert not has_valid_route_format(
+    assert not has_parsable_route(
         completion
     )

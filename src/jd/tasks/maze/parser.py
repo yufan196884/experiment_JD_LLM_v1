@@ -104,11 +104,11 @@ def parse_route(
     )
 
 
-def has_valid_route_format(
+def has_parsable_route(
     completion: str,
 ) -> bool:
     """
-    Return whether the completion contains exactly one valid Maze route.
+    Return whether the completion contains at least one parseable Maze route.
     """
     return (
         parse_route(completion)
