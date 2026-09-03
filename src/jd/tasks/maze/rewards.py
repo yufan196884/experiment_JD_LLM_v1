@@ -4,10 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .dataset import DIRECTIONS, MazeSpec, maze_from_record
-from .parser import (
-    extract_numbered_routes,
-    routes_are_distinct,
-)
+from .parser import parse_route
 
 
 # =============================================================================
@@ -149,95 +146,38 @@ def _clamp01(value: float) -> float:
 # Completion -> candidate reward matrix
 # =============================================================================
 
-def compute_candidate_reward_vectors(
+def compute_reward_vector(
     maze: MazeSpec,
     completion: str,
-    *,
-    num_routes: int = 3,
-    require_distinct: bool = False,
-) -> list[RewardVector]:
+) -> RewardVector:
     """
-    Compute one four-dimensional reward vector for every route in a model
-    completion.
+    Parse one model completion and return its four-dimensional reward vector.
 
-    Input:
-        completion containing
+    Expected completion format:
 
-            <route_1>...</route_1>
-            ...
-            <route_N>...</route_N>
+        <route>
+        UP RIGHT DOWN ...
+        </route>
 
-    Output:
-        A list with shape conceptually
-
-            [N, 4]
-
-        For example, with N = 3:
-
-            [
-                (1.0, 0.8, 0.0, 1.0),
-                (1.0, 0.0, 1.0, 0.75),
-                (0.0, 0.0, 0.0, 0.0),
-            ]
-
-    If the completion cannot be parsed, every candidate receives the zero
-    reward vector. This preserves a fixed [N, 4] output shape.
-
-    If `require_distinct=True`, duplicate routes also cause the whole
-    completion to receive zero reward.
+    Malformed completions receive ZERO_REWARD.
     """
-    if num_routes <= 0:
-        raise ValueError(
-            "num_routes must be positive."
-        )
-
-    routes = extract_numbered_routes(
-        completion,
-        num_routes=num_routes,
+    route = parse_route(
+        completion
     )
 
-    if routes is None:
-        return zero_reward_matrix(num_routes)
+    if route is None:
+        return ZERO_REWARD
 
-    if (
-        require_distinct
-        and not routes_are_distinct(routes)
-    ):
-        return zero_reward_matrix(num_routes)
-
-    return [
-        simulate_route(
-            maze,
-            route,
-        )
-        for route in routes
-    ]
+    return simulate_route(
+        maze,
+        route,
+    )
 
 
-def zero_reward_matrix(
-    num_routes: int,
-) -> list[RewardVector]:
-    """
-    Return an N x 4 matrix of zero reward vectors.
-    """
-    if num_routes <= 0:
-        raise ValueError(
-            "num_routes must be positive."
-        )
-
-    return [
-        ZERO_REWARD
-        for _ in range(num_routes)
-    ]
-
-
-def compute_candidate_rewards_from_record(
+def compute_reward_vector_from_record(
     record: Mapping[str, Any],
     completion: str,
-    *,
-    num_routes: int = 3,
-    require_distinct: bool = False,
-) -> list[RewardVector]:
+) -> RewardVector:
     """
     Convenience wrapper for Hugging Face Dataset rows.
     """
@@ -245,11 +185,9 @@ def compute_candidate_rewards_from_record(
         dict(record)
     )
 
-    return compute_candidate_reward_vectors(
+    return compute_reward_vector(
         maze,
         completion,
-        num_routes=num_routes,
-        require_distinct=require_distinct,
     )
 
 

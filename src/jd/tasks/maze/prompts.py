@@ -21,7 +21,7 @@ MAZE_PREFERENCE_NAMES = (
 NUM_MAZE_PREFERENCES = len(MAZE_PREFERENCE_NAMES)
 
 
-def _validate_preference(
+def validate_maze_preference(
     preference: Sequence[float],
 ) -> tuple[float, float, float, float]:
     """
@@ -89,7 +89,7 @@ def render_maze_preference(
     Render the preference vector in the stable machine-readable format
     supplied to the language model.
     """
-    values = _validate_preference(
+    values = validate_maze_preference(
         preference
     )
 

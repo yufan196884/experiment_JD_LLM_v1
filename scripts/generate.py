@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
@@ -42,7 +41,7 @@ from jd.tasks.maze.prompts import (
     build_maze_messages,
     validate_maze_preference,
 )
-from jd.tasks.maze.parser import parse_moves
+from jd.tasks.maze.parser import parse_route
 from jd.tasks.maze.rewards import (
     MAZE_REWARD_NAMES,
     ZERO_REWARD,
@@ -51,44 +50,9 @@ from jd.tasks.maze.rewards import (
 
 
 # =============================================================================
-# Single-route parsing
+# Single-route parsing REMOVED
 # =============================================================================
 
-ROUTE_PATTERN = re.compile(
-    r"\s*<route>\s*(.*?)\s*</route>\s*",
-    flags=re.IGNORECASE | re.DOTALL,
-)
-
-
-def parse_single_route(
-    completion: str,
-) -> list[str] | None:
-    """
-    Parse exactly one <route>...</route> completion.
-
-    The entire completion must consist of one route tag, with only
-    whitespace outside the tag. Inside the tag, every token must be one of:
-
-        UP
-        DOWN
-        LEFT
-        RIGHT
-
-    Returns None for malformed completions.
-    """
-    if not isinstance(completion, str):
-        return None
-
-    match = ROUTE_PATTERN.fullmatch(
-        completion
-    )
-
-    if match is None:
-        return None
-
-    return parse_moves(
-        match.group(1)
-    )
 
 
 # =============================================================================
@@ -485,7 +449,7 @@ def main() -> None:
             completion
         )
 
-        route = parse_single_route(
+        route = parse_route(
             completion
         )
 
