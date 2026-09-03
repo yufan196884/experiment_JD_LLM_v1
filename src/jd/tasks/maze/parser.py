@@ -74,7 +74,7 @@ def parse_moves(
 # =============================================================================
 
 _ROUTE_PATTERN = re.compile(
-    r"\s*<route>\s*(.*?)\s*</route>\s*",
+    r"<route>\s*(.*?)\s*</route>",
     flags=re.IGNORECASE | re.DOTALL,
 )
 
@@ -83,39 +83,16 @@ def parse_route(
     completion: str,
 ) -> MoveSequence | None:
     """
-    Parse exactly one route from a model completion.
+    Extract the first valid <route>...</route> block from a completion.
 
-    Expected completion format:
-
-        <route>
-        UP RIGHT DOWN LEFT ...
-        </route>
-
-    The model is required to output exactly one route and no other text.
-    Therefore, apart from surrounding whitespace, the entire completion
-    must consist of one <route>...</route> block.
-
-    Route tags are matched case-insensitively and the route contents may
-    span multiple lines.
-
-    Returns:
-        A parsed movement sequence such as:
-
-            ["UP", "RIGHT", "DOWN"]
-
-        or None if:
-          - the <route> tag is missing;
-          - the closing </route> tag is missing;
-          - text appears outside the route block;
-          - the route is empty;
-          - any route token is invalid.
+    Text before or after the route block is ignored.
     """
     if not isinstance(completion, str):
         raise TypeError(
             "completion must be a string."
         )
 
-    match = _ROUTE_PATTERN.fullmatch(
+    match = _ROUTE_PATTERN.search(
         completion
     )
 
