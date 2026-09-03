@@ -463,22 +463,16 @@ def main() -> None:
                 "  INVALID: could not extract a valid "
                 "<route>...</route> block."
             )
-
-            reward_vector = compute_reward_vector(
-    maze,
-    completion,
-)
-
         else:
             print(
                 " ",
                 route,
             )
 
-            reward_vector = simulate_route(
-                maze,
-                route,
-            )
+        reward_vector = compute_reward_vector(
+            maze,
+            completion,
+        )
 
         group_rewards.append(
             reward_vector
