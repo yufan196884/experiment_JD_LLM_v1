@@ -1,10 +1,13 @@
 from jd.tasks.maze.parser import (
-    completion_has_distinct_routes,
-    extract_numbered_routes,
+    has_valid_route_format,
     parse_moves,
-    routes_are_distinct,
+    parse_route,
 )
 
+
+# =============================================================================
+# Low-level move parsing
+# =============================================================================
 
 def test_parse_moves():
     assert parse_moves(
@@ -28,93 +31,194 @@ def test_parse_moves_rejects_empty_route():
     assert parse_moves("   ") is None
 
 
-def test_extract_routes():
+# =============================================================================
+# Single-route completion parsing
+# =============================================================================
+
+def test_parse_route():
     completion = """
-    <route_1>UP RIGHT DOWN</route_1>
-    <route_2>LEFT LEFT DOWN</route_2>
-    <route_3>RIGHT UP RIGHT</route_3>
+    <route>
+    UP RIGHT DOWN LEFT
+    </route>
     """
 
-    routes = extract_numbered_routes(
-        completion,
-        num_routes=3,
+    route = parse_route(
+        completion
     )
 
-    assert routes == [
-        ["UP", "RIGHT", "DOWN"],
-        ["LEFT", "LEFT", "DOWN"],
-        ["RIGHT", "UP", "RIGHT"],
+    assert route == [
+        "UP",
+        "RIGHT",
+        "DOWN",
+        "LEFT",
     ]
 
 
-def test_extract_routes_case_insensitive():
+def test_parse_route_case_insensitive():
     completion = """
-    <ROUTE_1>up right</ROUTE_1>
-    <Route_2>left down</Route_2>
-    <route_3>right right</route_3>
+    <RoUtE>
+    up right DOWN left
+    </rOuTe>
     """
 
-    routes = extract_numbered_routes(
-        completion,
-        num_routes=3,
+    route = parse_route(
+        completion
     )
 
-    assert routes == [
-        ["UP", "RIGHT"],
-        ["LEFT", "DOWN"],
-        ["RIGHT", "RIGHT"],
+    assert route == [
+        "UP",
+        "RIGHT",
+        "DOWN",
+        "LEFT",
     ]
 
 
-def test_missing_route_is_invalid():
+def test_parse_route_allows_surrounding_whitespace():
     completion = """
-    <route_1>UP RIGHT</route_1>
-    <route_2>LEFT DOWN</route_2>
+
+        <route>
+        UP RIGHT DOWN
+        </route>
+
     """
 
-    assert (
-        extract_numbered_routes(
-            completion,
-            num_routes=3,
-        )
-        is None
-    )
+    assert parse_route(
+        completion
+    ) == [
+        "UP",
+        "RIGHT",
+        "DOWN",
+    ]
+
+
+def test_missing_opening_tag_is_invalid():
+    completion = """
+    UP RIGHT DOWN
+    </route>
+    """
+
+    assert parse_route(
+        completion
+    ) is None
+
+
+def test_missing_closing_tag_is_invalid():
+    completion = """
+    <route>
+    UP RIGHT DOWN
+    """
+
+    assert parse_route(
+        completion
+    ) is None
+
+
+def test_empty_route_is_invalid():
+    completion = """
+    <route>
+    </route>
+    """
+
+    assert parse_route(
+        completion
+    ) is None
 
 
 def test_invalid_move_invalidates_completion():
     completion = """
-    <route_1>UP RIGHT</route_1>
-    <route_2>LEFT JUMP</route_2>
-    <route_3>DOWN RIGHT</route_3>
+    <route>
+    UP RIGHT JUMP DOWN
+    </route>
     """
 
-    assert (
-        extract_numbered_routes(
-            completion,
-            num_routes=3,
-        )
-        is None
+    assert parse_route(
+        completion
+    ) is None
+
+
+# =============================================================================
+# Exact output-format enforcement
+# =============================================================================
+
+def test_text_before_route_is_invalid():
+    completion = """
+    Here is the best route:
+
+    <route>
+    UP RIGHT DOWN
+    </route>
+    """
+
+    assert parse_route(
+        completion
+    ) is None
+
+
+def test_text_after_route_is_invalid():
+    completion = """
+    <route>
+    UP RIGHT DOWN
+    </route>
+
+    This route avoids lava.
+    """
+
+    assert parse_route(
+        completion
+    ) is None
+
+
+def test_multiple_routes_are_invalid():
+    completion = """
+    <route>
+    UP RIGHT
+    </route>
+
+    <route>
+    DOWN LEFT
+    </route>
+    """
+
+    assert parse_route(
+        completion
+    ) is None
+
+
+def test_old_numbered_route_format_is_invalid():
+    completion = """
+    <route_1>
+    UP RIGHT DOWN
+    </route_1>
+    """
+
+    assert parse_route(
+        completion
+    ) is None
+
+
+# =============================================================================
+# Convenience format checker
+# =============================================================================
+
+def test_has_valid_route_format():
+    completion = """
+    <route>
+    UP RIGHT DOWN LEFT
+    </route>
+    """
+
+    assert has_valid_route_format(
+        completion
     )
 
 
-def test_route_uniqueness():
-    routes = [
-        ["UP", "RIGHT"],
-        ["DOWN", "RIGHT"],
-        ["UP", "RIGHT"],
-    ]
-
-    assert not routes_are_distinct(routes)
-
-
-def test_completion_distinct_routes():
+def test_has_valid_route_format_rejects_invalid_completion():
     completion = """
-    <route_1>UP RIGHT</route_1>
-    <route_2>DOWN RIGHT</route_2>
-    <route_3>LEFT DOWN</route_3>
+    <route>
+    UP TELEPORT RIGHT
+    </route>
     """
 
-    assert completion_has_distinct_routes(
-        completion,
-        num_routes=3,
+    assert not has_valid_route_format(
+        completion
     )

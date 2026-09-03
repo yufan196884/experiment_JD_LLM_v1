@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import torch
 # ---------------------------------------------------------------------------
 # Allow this script to be run directly from the repository root:
 #
-#     python scripts/smoke_test_maze_generation.py
+#     python scripts/generate.py
 #
 # without first installing the jd package.
 # ---------------------------------------------------------------------------
@@ -34,26 +35,72 @@ from jd.models.generation import generate_completions
 from jd.tasks.maze.dataset import (
     build_maze_dataset,
     load_maze_dataset,
+    maze_from_record,
 )
-from jd.tasks.maze.prompts import build_maze_messages
-from jd.tasks.maze.parser import (
-    extract_numbered_routes,
-    routes_are_distinct,
+from jd.tasks.maze.prompts import (
+    MAZE_PREFERENCE_NAMES,
+    build_maze_messages,
+    validate_maze_preference,
 )
+from jd.tasks.maze.parser import parse_moves
 from jd.tasks.maze.rewards import (
     MAZE_REWARD_NAMES,
-    compute_candidate_rewards_from_record,
+    ZERO_REWARD,
+    simulate_route,
 )
 
 
-NUM_ROUTES = 3
+# =============================================================================
+# Single-route parsing
+# =============================================================================
 
+ROUTE_PATTERN = re.compile(
+    r"\s*<route>\s*(.*?)\s*</route>\s*",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_single_route(
+    completion: str,
+) -> list[str] | None:
+    """
+    Parse exactly one <route>...</route> completion.
+
+    The entire completion must consist of one route tag, with only
+    whitespace outside the tag. Inside the tag, every token must be one of:
+
+        UP
+        DOWN
+        LEFT
+        RIGHT
+
+    Returns None for malformed completions.
+    """
+    if not isinstance(completion, str):
+        return None
+
+    match = ROUTE_PATTERN.fullmatch(
+        completion
+    )
+
+    if match is None:
+        return None
+
+    return parse_moves(
+        match.group(1)
+    )
+
+
+# =============================================================================
+# Command-line arguments
+# =============================================================================
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Smoke test for Maze dataset -> prompt -> "
-            "Qwen generation -> parser -> reward matrix."
+            "Smoke test for preference-conditioned single-route Maze "
+            "generation: dataset -> prompt -> Qwen generation -> "
+            "parser -> reward vector."
         )
     )
 
@@ -87,12 +134,25 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--preference",
+        type=float,
+        nargs=4,
+        default=(0.25, 0.25, 0.25, 0.25),
+        help=(
+            "Four preference weights in the order: "
+            "completion gold diamond lava_avoidance. "
+            "Weights must be non-negative and sum to 1. "
+            "Example: --preference 0.1 0.7 0.1 0.1"
+        ),
+    )
+
+    parser.add_argument(
         "--num-generations",
         type=int,
         default=2,
         help=(
-            "Number G of independent model completions. "
-            "Use 2 for a smoke test; later use 8 for training."
+            "Number G of independent one-route rollouts. "
+            "Use 2 for a smoke test; use 8 initially for training."
         ),
     )
 
@@ -124,20 +184,56 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# =============================================================================
+# Main smoke test
+# =============================================================================
+
 def main() -> None:
     args = parse_args()
 
     # -----------------------------------------------------------------------
-    # 1. Reproducibility for stochastic generation.
+    # 1. Validate preference.
+    #
+    # One preference omega is shared by ALL G rollouts in this group.
+    #
+    #     (Maze x, omega)
+    #           |
+    #           +--> rollout 1 -> one route
+    #           +--> rollout 2 -> one route
+    #           ...
+    #           +--> rollout G -> one route
+    #
     # -----------------------------------------------------------------------
 
-    torch.manual_seed(args.seed)
+    preference = validate_maze_preference(
+        args.preference
+    )
+
+    print("\nPreference vector:")
+
+    for name, weight in zip(
+        MAZE_PREFERENCE_NAMES,
+        preference,
+    ):
+        print(
+            f"  {name:16s} = {weight:.6f}"
+        )
+
+    # -----------------------------------------------------------------------
+    # 2. Reproducibility for stochastic generation.
+    # -----------------------------------------------------------------------
+
+    torch.manual_seed(
+        args.seed
+    )
 
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+        torch.cuda.manual_seed_all(
+            args.seed
+        )
 
     # -----------------------------------------------------------------------
-    # 2. Load or construct Maze dataset.
+    # 3. Load or construct Maze dataset.
     # -----------------------------------------------------------------------
 
     if args.data_dir is not None:
@@ -163,15 +259,27 @@ def main() -> None:
     print("\nDataset:")
     print(dataset)
 
-    split = dataset[args.split]
+    split = dataset[
+        args.split
+    ]
 
-    if not (0 <= args.index < len(split)):
+    if not (
+        0
+        <= args.index
+        < len(split)
+    ):
         raise IndexError(
             f"Index {args.index} is invalid for split "
             f"{args.split!r} with {len(split)} examples."
         )
 
-    record = split[args.index]
+    record = split[
+        args.index
+    ]
+
+    maze = maze_from_record(
+        dict(record)
+    )
 
     print(
         f"\nSelected example:"
@@ -182,17 +290,32 @@ def main() -> None:
     )
 
     # -----------------------------------------------------------------------
-    # 3. Convert Maze record into chat messages.
+    # 4. Convert (Maze, preference) into chat messages.
+    #
+    # IMPORTANT:
+    #
+    # The preference is part of the policy conditioning:
+    #
+    #     pi_theta(y | x, omega)
+    #
+    # The same omega must be used for all G rollouts in this group.
     # -----------------------------------------------------------------------
 
     messages = build_maze_messages(
         record,
-        num_routes=NUM_ROUTES,
+        preference=preference,
     )
 
-    print("\n" + "=" * 80)
-    print("CHAT PROMPT")
-    print("=" * 80)
+    print(
+        "\n"
+        + "=" * 80
+    )
+    print(
+        "CHAT PROMPT"
+    )
+    print(
+        "=" * 80
+    )
 
     for message in messages:
         print(
@@ -203,12 +326,19 @@ def main() -> None:
         )
 
     # -----------------------------------------------------------------------
-    # 4. Load Qwen3.5-0.8B.
+    # 5. Load model.
     # -----------------------------------------------------------------------
 
-    print("\n" + "=" * 80)
-    print("LOADING MODEL")
-    print("=" * 80)
+    print(
+        "\n"
+        + "=" * 80
+    )
+    print(
+        "LOADING MODEL"
+    )
+    print(
+        "=" * 80
+    )
 
     bundle = load_model_and_tokenizer(
         model_name_or_path=args.model,
@@ -229,26 +359,31 @@ def main() -> None:
     )
 
     # -----------------------------------------------------------------------
-    # 5. Generate G rollouts.
+    # 6. Generate G independent rollouts.
     #
-    # IMPORTANT:
+    # NEW STRUCTURE:
     #
-    # Each generated text here is ONE rollout.
-    # Each rollout should itself contain N=3 routes.
+    #     one prompt = (Maze x, preference omega)
     #
-    # So:
+    #     rollout 1 -> ONE route
+    #     rollout 2 -> ONE route
+    #     ...
+    #     rollout G -> ONE route
     #
-    #     G completions
-    #         x
-    #     N=3 routes per completion
-    #
+    # There is NO VPO N=3 candidate dimension.
     # -----------------------------------------------------------------------
 
-    print("\n" + "=" * 80)
     print(
-        f"GENERATING {args.num_generations} ROLLOUT(S)"
+        "\n"
+        + "=" * 80
     )
-    print("=" * 80)
+    print(
+        f"GENERATING {args.num_generations} "
+        "INDEPENDENT ONE-ROUTE ROLLOUT(S)"
+    )
+    print(
+        "=" * 80
+    )
 
     generations = generate_completions(
         model=bundle.model,
@@ -262,120 +397,213 @@ def main() -> None:
     )
 
     # -----------------------------------------------------------------------
-    # 6. Inspect generation tensors.
+    # 7. Inspect generation tensors.
     # -----------------------------------------------------------------------
 
-    print("\nGeneration tensor shapes:")
-
     print(
-        "  prompt_input_ids:     ",
-        tuple(generations.prompt_input_ids.shape),
+        "\nGeneration tensor shapes:"
     )
 
     print(
-        "  prompt_attention_mask:",
-        tuple(generations.prompt_attention_mask.shape),
+        "  prompt_input_ids:      ",
+        tuple(
+            generations.prompt_input_ids.shape
+        ),
     )
 
     print(
-        "  sequences:            ",
-        tuple(generations.sequences.shape),
+        "  prompt_attention_mask: ",
+        tuple(
+            generations.prompt_attention_mask.shape
+        ),
     )
 
     print(
-        "  completion_ids:       ",
-        tuple(generations.completion_ids.shape),
+        "  sequences:              ",
+        tuple(
+            generations.sequences.shape
+        ),
     )
 
     print(
-        "  completion_mask:      ",
-        tuple(generations.completion_mask.shape),
+        "  completion_ids:         ",
+        tuple(
+            generations.completion_ids.shape
+        ),
+    )
+
+    print(
+        "  completion_mask:        ",
+        tuple(
+            generations.completion_mask.shape
+        ),
     )
 
     # -----------------------------------------------------------------------
-    # 7. Print, parse, and reward each rollout.
+    # 8. Parse and reward each rollout independently.
+    #
+    # For one rollout:
+    #
+    #     completion -> one route -> RewardVector [M=4]
+    #
+    # Across the complete group:
+    #
+    #     G rollouts -> reward tensor [G, M]
+    #
+    # With the initial training setting:
+    #
+    #     G = 8
+    #     M = 4
+    #
+    # so:
+    #
+    #     R in R^{8 x 4}
+    #
     # -----------------------------------------------------------------------
+
+    group_rewards = []
 
     for rollout_index, completion in enumerate(
         generations.texts,
         start=1,
     ):
-        print("\n" + "#" * 80)
+        print(
+            "\n"
+            + "#" * 80
+        )
         print(
             f"ROLLOUT {rollout_index}"
         )
-        print("#" * 80)
-
-        print("\nRAW MODEL OUTPUT:\n")
-        print(completion)
-
-        # ---------------------------------------------------------------
-        # Parse the three route tags.
-        # ---------------------------------------------------------------
-
-        routes = extract_numbered_routes(
-            completion,
-            num_routes=NUM_ROUTES,
+        print(
+            "#" * 80
         )
-
-        print("\nPARSED ROUTES:")
-
-        if routes is None:
-            print(
-                "  INVALID: parser could not extract "
-                "all three valid routes."
-            )
-
-        else:
-            for route_index, route in enumerate(
-                routes,
-                start=1,
-            ):
-                print(
-                    f"  route_{route_index}: "
-                    f"{route}"
-                )
-
-            print(
-                "\nAll routes distinct:",
-                routes_are_distinct(routes),
-            )
-
-        # ---------------------------------------------------------------
-        # This additionally verifies rewards.py.
-        #
-        # Expected conceptual shape:
-        #
-        #       [N=3, M=4]
-        #
-        # ---------------------------------------------------------------
-
-        reward_matrix = compute_candidate_rewards_from_record(
-            record,
-            completion,
-            num_routes=NUM_ROUTES,
-            require_distinct=False,
-        )
-
-        print("\nREWARD MATRIX [N=3, M=4]:")
 
         print(
-            "  columns:",
-            MAZE_REWARD_NAMES,
+            "\nRAW MODEL OUTPUT:\n"
+        )
+        print(
+            completion
         )
 
-        for route_index, reward_vector in enumerate(
-            reward_matrix,
-            start=1,
-        ):
+        route = parse_single_route(
+            completion
+        )
+
+        print(
+            "\nPARSED ROUTE:"
+        )
+
+        if route is None:
             print(
-                f"  route_{route_index}: "
-                f"{reward_vector}"
+                "  INVALID: expected exactly one valid "
+                "<route>...</route> completion."
             )
 
-    print("\n" + "=" * 80)
-    print("SMOKE TEST COMPLETE")
-    print("=" * 80)
+            reward_vector = ZERO_REWARD
+
+        else:
+            print(
+                " ",
+                route,
+            )
+
+            reward_vector = simulate_route(
+                maze,
+                route,
+            )
+
+        group_rewards.append(
+            reward_vector
+        )
+
+        print(
+            "\nREWARD VECTOR [M=4]:"
+        )
+
+        for reward_name, reward_value in zip(
+            MAZE_REWARD_NAMES,
+            reward_vector,
+        ):
+            print(
+                f"  {reward_name:16s} = {reward_value:.6f}"
+            )
+
+    # -----------------------------------------------------------------------
+    # 9. Assemble the raw GDPO group reward tensor.
+    #
+    # No scalarization is performed here.
+    #
+    # This is the tensor that later enters reward-decoupled normalization:
+    #
+    #     R [G, M] -> A [G, M]
+    #
+    # -----------------------------------------------------------------------
+
+    reward_tensor = torch.tensor(
+        group_rewards,
+        dtype=torch.float32,
+    )
+
+    print(
+        "\n"
+        + "=" * 80
+    )
+    print(
+        "GROUP REWARD TENSOR"
+    )
+    print(
+        "=" * 80
+    )
+
+    print(
+        "\nReward columns:"
+    )
+
+    for index, name in enumerate(
+        MAZE_REWARD_NAMES
+    ):
+        print(
+            f"  {index}: {name}"
+        )
+
+    print(
+        "\nR ="
+    )
+    print(
+        reward_tensor
+    )
+
+    print(
+        "\nShape:",
+        tuple(
+            reward_tensor.shape
+        ),
+    )
+
+    expected_shape = (
+        args.num_generations,
+        len(MAZE_REWARD_NAMES),
+    )
+
+    if tuple(
+        reward_tensor.shape
+    ) != expected_shape:
+        raise RuntimeError(
+            "Unexpected reward tensor shape: "
+            f"expected {expected_shape}, "
+            f"got {tuple(reward_tensor.shape)}."
+        )
+
+    print(
+        "\n"
+        + "=" * 80
+    )
+    print(
+        "SMOKE TEST COMPLETE"
+    )
+    print(
+        "=" * 80
+    )
 
 
 if __name__ == "__main__":

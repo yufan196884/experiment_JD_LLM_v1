@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from typing import Sequence
 
 
 VALID_MOVES = frozenset({
@@ -14,9 +13,15 @@ VALID_MOVES = frozenset({
 MoveSequence = list[str]
 
 
-def parse_moves(route_text: str) -> MoveSequence | None:
+# =============================================================================
+# Move parsing
+# =============================================================================
+
+def parse_moves(
+    route_text: str,
+) -> MoveSequence | None:
     """
-    Parse the contents of a single <route_i>...</route_i> tag.
+    Parse the contents of one <route>...</route> tag.
 
     The route must consist only of whitespace-separated movement commands:
 
@@ -37,9 +42,14 @@ def parse_moves(route_text: str) -> MoveSequence | None:
       - the route is empty;
       - any token is not a valid movement command.
 
-    We intentionally reject invalid tokens rather than silently ignoring them,
-    because malformed routes should not accidentally receive reward.
+    Invalid tokens are rejected rather than silently ignored so that
+    malformed routes cannot accidentally receive reward.
     """
+    if not isinstance(route_text, str):
+        raise TypeError(
+            "route_text must be a string."
+        )
+
     tokens = route_text.strip().split()
 
     if not tokens:
@@ -59,135 +69,71 @@ def parse_moves(route_text: str) -> MoveSequence | None:
     return moves
 
 
-def extract_numbered_routes(
+# =============================================================================
+# Completion parsing
+# =============================================================================
+
+_ROUTE_PATTERN = re.compile(
+    r"\s*<route>\s*(.*?)\s*</route>\s*",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_route(
     completion: str,
-    *,
-    num_routes: int = 3,
-) -> list[MoveSequence] | None:
+) -> MoveSequence | None:
     """
-    Extract numbered Maze routes from a model completion.
+    Parse exactly one route from a model completion.
 
-    Expected format:
+    Expected completion format:
 
-        <route_1>
-        UP RIGHT DOWN ...
-        </route_1>
+        <route>
+        UP RIGHT DOWN LEFT ...
+        </route>
 
-        <route_2>
-        ...
-        </route_2>
+    The model is required to output exactly one route and no other text.
+    Therefore, apart from surrounding whitespace, the entire completion
+    must consist of one <route>...</route> block.
 
-        ...
-
-        <route_K>
-        ...
-        </route_K>
-
-    Tags are matched case-insensitively and route contents may span multiple
-    lines.
+    Route tags are matched case-insensitively and the route contents may
+    span multiple lines.
 
     Returns:
-        A list of K parsed routes:
+        A parsed movement sequence such as:
 
-            [
-                ["UP", "RIGHT", ...],
-                ["DOWN", "LEFT", ...],
-                ...
-            ]
+            ["UP", "RIGHT", "DOWN"]
 
-        or None if any required route is missing or malformed.
+        or None if:
+          - the <route> tag is missing;
+          - the closing </route> tag is missing;
+          - text appears outside the route block;
+          - the route is empty;
+          - any route token is invalid.
     """
-    if num_routes <= 0:
-        raise ValueError(
-            "num_routes must be positive."
-        )
-
     if not isinstance(completion, str):
         raise TypeError(
             "completion must be a string."
         )
 
-    routes: list[MoveSequence] = []
+    match = _ROUTE_PATTERN.fullmatch(
+        completion
+    )
 
-    for index in range(1, num_routes + 1):
-        pattern = (
-            rf"<route_{index}>"
-            rf"(.*?)"
-            rf"</route_{index}>"
-        )
+    if match is None:
+        return None
 
-        match = re.search(
-            pattern,
-            completion,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-
-        if match is None:
-            return None
-
-        moves = parse_moves(
-            match.group(1)
-        )
-
-        if moves is None:
-            return None
-
-        routes.append(moves)
-
-    return routes
+    return parse_moves(
+        match.group(1)
+    )
 
 
 def has_valid_route_format(
     completion: str,
-    *,
-    num_routes: int = 3,
 ) -> bool:
     """
-    Return whether a completion contains all required valid Maze routes.
-
-    This is a convenience function for format rewards and evaluation.
+    Return whether the completion contains exactly one valid Maze route.
     """
     return (
-        extract_numbered_routes(
-            completion,
-            num_routes=num_routes,
-        )
+        parse_route(completion)
         is not None
     )
-
-
-def routes_are_distinct(
-    routes: Sequence[Sequence[str]],
-) -> bool:
-    """
-    Return True iff all routes are different movement sequences.
-
-    Note that route uniqueness is logically separate from parsing:
-    a completion may be syntactically valid while containing duplicate routes.
-    """
-    normalized = [
-        tuple(move.upper() for move in route)
-        for route in routes
-    ]
-
-    return len(normalized) == len(set(normalized))
-
-
-def completion_has_distinct_routes(
-    completion: str,
-    *,
-    num_routes: int = 3,
-) -> bool:
-    """
-    Return True iff the completion is valid and all generated routes
-    are distinct.
-    """
-    routes = extract_numbered_routes(
-        completion,
-        num_routes=num_routes,
-    )
-
-    if routes is None:
-        return False
-
-    return routes_are_distinct(routes)
