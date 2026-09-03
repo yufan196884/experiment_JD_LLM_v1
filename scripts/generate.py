@@ -45,6 +45,7 @@ from jd.tasks.maze.parser import parse_route
 from jd.tasks.maze.rewards import (
     MAZE_REWARD_NAMES,
     ZERO_REWARD,
+    compute_reward_vector,
     simulate_route,
 )
 
@@ -459,11 +460,14 @@ def main() -> None:
 
         if route is None:
             print(
-                "  INVALID: expected exactly one valid "
-                "<route>...</route> completion."
+                "  INVALID: could not extract a valid "
+                "<route>...</route> block."
             )
 
-            reward_vector = ZERO_REWARD
+            reward_vector = compute_reward_vector(
+    maze,
+    completion,
+)
 
         else:
             print(
