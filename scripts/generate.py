@@ -30,7 +30,9 @@ from jd.models.loading import (
     load_model_and_tokenizer,
 )
 from jd.models.generation import generate_completions
-
+from jd.training.advantages import (
+    compute_reward_decoupled_advantages,
+)
 from jd.tasks.maze.dataset import (
     build_maze_dataset,
     load_maze_dataset,
@@ -65,7 +67,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Smoke test for preference-conditioned single-route Maze "
             "generation: dataset -> prompt -> Qwen generation -> "
-            "parser -> reward vector."
+            "parser -> reward vector -> reward-decoupled advantages."
         )
     )
 
@@ -561,6 +563,139 @@ def main() -> None:
             "Unexpected reward tensor shape: "
             f"expected {expected_shape}, "
             f"got {tuple(reward_tensor.shape)}."
+        )
+
+    # -----------------------------------------------------------------------
+    # 10. Compute GDPO-style reward-decoupled advantages.
+    #
+    # Each reward objective is normalized independently across the G
+    # rollouts:
+    #
+    #                R[g, i] - mean_g(R[:, i])
+    #     A[g, i] = --------------------------------
+    #                     std_g(R[:, i]) + eps
+    #
+    # Input:
+    #
+    #     R [G, M]
+    #
+    # Output:
+    #
+    #     A [G, M]
+    #
+    # IMPORTANT:
+    #
+    # We deliberately stop after per-reward normalization.
+    #
+    # We DO NOT:
+    #
+    #   - sum advantages across rewards;
+    #   - multiply them by the preference vector;
+    #   - perform GDPO's final batch-wise normalization;
+    #   - collapse [G, M] into [G].
+    #
+    # The M separate advantage streams are required later to construct
+    # M separate PPO losses and therefore M separate objective gradients
+    # for Jacobian Descent.
+    # -----------------------------------------------------------------------
+
+    advantages = compute_reward_decoupled_advantages(
+        reward_tensor
+    )
+
+    print(
+        "\n"
+        + "=" * 80
+    )
+    print(
+        "REWARD-DECOUPLED ADVANTAGES"
+    )
+    print(
+        "=" * 80
+    )
+
+    print(
+        "\nAdvantage columns:"
+    )
+
+    for index, name in enumerate(
+        MAZE_REWARD_NAMES
+    ):
+        print(
+            f"  {index}: {name}"
+        )
+
+    print(
+        "\nA ="
+    )
+    print(
+        advantages
+    )
+
+    print(
+        "\nShape:",
+        tuple(
+            advantages.shape
+        ),
+    )
+
+    if advantages.shape != reward_tensor.shape:
+        raise RuntimeError(
+            "Reward-decoupled advantage tensor must have the same shape "
+            "as the reward tensor: "
+            f"rewards={tuple(reward_tensor.shape)}, "
+            f"advantages={tuple(advantages.shape)}."
+        )
+
+    # -----------------------------------------------------------------------
+    # 11. Print per-objective normalization diagnostics.
+    #
+    # For a reward channel with non-zero variance, the advantages should
+    # have approximately zero mean across the rollout group.
+    #
+    # A constant reward channel should instead contain all-zero advantages.
+    #
+    # These diagnostics make it easy to verify the normalization during
+    # the smoke test before the PPO loss is implemented.
+    # -----------------------------------------------------------------------
+
+    print(
+        "\nPer-objective diagnostics:"
+    )
+
+    for reward_index, reward_name in enumerate(
+        MAZE_REWARD_NAMES
+    ):
+        raw_values = reward_tensor[
+            :,
+            reward_index,
+        ]
+
+        advantage_values = advantages[
+            :,
+            reward_index,
+        ]
+
+        raw_mean = raw_values.mean()
+        raw_std = raw_values.std()
+
+        advantage_mean = advantage_values.mean()
+        advantage_std = advantage_values.std()
+
+        print(
+            f"\n  {reward_name}:"
+        )
+        print(
+            f"    reward mean      = {raw_mean.item():.6f}"
+        )
+        print(
+            f"    reward std       = {raw_std.item():.6f}"
+        )
+        print(
+            f"    advantage mean   = {advantage_mean.item():.6f}"
+        )
+        print(
+            f"    advantage std    = {advantage_std.item():.6f}"
         )
 
     print(
