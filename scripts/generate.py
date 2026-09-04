@@ -52,7 +52,9 @@ from jd.tasks.maze.rewards import (
 )
 
 from jd.training.grpo_loss import (
+    DEFAULT_PPO_CLIP_EPS,
     completion_token_logprobs,
+    per_objective_ppo_losses,
 )
 # =============================================================================
 # Single-route parsing REMOVED
@@ -164,6 +166,13 @@ def parse_args() -> argparse.Namespace:
             "Micro-batch size used when forward-scoring completion token "
             "log-probabilities. Reduce this if scoring runs out of GPU memory."
         ),
+    )
+
+    parser.add_argument(
+        "--ppo-clip-eps",
+        type=float,
+        default=DEFAULT_PPO_CLIP_EPS,
+        help="PPO clipping epsilon used by the per-objective surrogate losses.",
     )
 
     return parser.parse_args()
@@ -798,6 +807,107 @@ def main() -> None:
     # )
     #
     # ratio = torch.exp(current_logprobs - old_logprobs)
+
+    # -----------------------------------------------------------------------
+    # 13. Re-score the same sampled tokens under the current policy with
+    # gradients enabled, then construct one PPO loss per reward objective.
+    #
+    # On this first smoke-test pass there has not yet been an optimizer update,
+    # so pi_theta == pi_old and rho is numerically approximately 1. PPO clipping
+    # therefore should not activate meaningfully yet. The losses can also be
+    # numerically close to zero because GDPO advantages are group-centered,
+    # while their gradients are still non-zero.
+    # -----------------------------------------------------------------------
+
+    print(
+        "\n"
+        + "=" * 80
+    )
+    print("CURRENT-POLICY TOKEN LOG-PROBABILITIES")
+    print("=" * 80)
+
+    # eval() keeps this smoke-test comparison deterministic while still allowing
+    # autograd. A real trainer may use train() according to its dropout policy.
+    bundle.model.eval()
+
+    current_logprobs = completion_token_logprobs(
+        bundle.model,
+        sequences=generations.sequences,
+        full_attention_mask=generations.full_attention_mask,
+        completion_ids=generations.completion_ids,
+        completion_mask=generations.completion_mask,
+        prompt_length=generations.prompt_length,
+        micro_batch_size=args.score_batch_size,
+    )
+
+    print("\ncurrent_logprobs shape:", tuple(current_logprobs.shape))
+    print("requires_grad:", current_logprobs.requires_grad)
+
+    if current_logprobs.shape != old_logprobs.shape:
+        raise RuntimeError(
+            "current_logprobs and old_logprobs must have identical shape: "
+            f"current={tuple(current_logprobs.shape)}, "
+            f"old={tuple(old_logprobs.shape)}."
+        )
+
+    advantages_for_loss = advantages.to(
+        device=current_logprobs.device,
+    )
+
+    losses = per_objective_ppo_losses(
+        current_logprobs=current_logprobs,
+        old_logprobs=old_logprobs,
+        advantages=advantages_for_loss,
+        completion_mask=generations.completion_mask,
+        clip_eps=args.ppo_clip_eps,
+    )
+
+    expected_loss_count = len(MAZE_REWARD_NAMES)
+    if len(losses) != expected_loss_count:
+        raise RuntimeError(
+            "Expected one PPO loss per reward objective: "
+            f"expected {expected_loss_count}, got {len(losses)}."
+        )
+
+    if any(loss.ndim != 0 for loss in losses):
+        raise RuntimeError(
+            "Every per-objective PPO loss must be a scalar tensor."
+        )
+
+    with torch.no_grad():
+        ratios = torch.exp(
+            current_logprobs.detach() - old_logprobs
+        )
+        valid_ratios = ratios[
+            generations.completion_mask
+        ]
+
+    print(
+        "\nFresh-policy ratio diagnostics "
+        "(should be approximately 1 before any update):"
+    )
+    print("  mean ratio =", valid_ratios.mean().item())
+    print("  min ratio  =", valid_ratios.min().item())
+    print("  max ratio  =", valid_ratios.max().item())
+
+    print(
+        "\nPER-OBJECTIVE PPO LOSSES"
+    )
+
+    for reward_name, loss in zip(
+        MAZE_REWARD_NAMES,
+        losses,
+    ):
+        print(
+            f"  {reward_name:16s} = {loss.item(): .8f} "
+            f"(requires_grad={loss.requires_grad})"
+        )
+
+    print(
+        "\nDo not combine these losses with omega before differentiation. "
+        "The next trainer stage must compute one gradient per scalar loss."
+    )
+
 
 
     print(
