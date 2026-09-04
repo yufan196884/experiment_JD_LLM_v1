@@ -338,6 +338,7 @@ def main() -> None:
         model_name_or_path=args.model,
         device=args.device,
         dtype=args.dtype,
+        gradient_checkpointing=True,
         freeze_vision=True,
     )
 
@@ -828,7 +829,7 @@ def main() -> None:
 
     # eval() keeps this smoke-test comparison deterministic while still allowing
     # autograd. A real trainer may use train() according to its dropout policy.
-    bundle.model.eval()
+    bundle.model.train()
 
     current_logprobs = completion_token_logprobs(
         bundle.model,
