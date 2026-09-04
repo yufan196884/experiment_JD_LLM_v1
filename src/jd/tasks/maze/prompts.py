@@ -134,8 +134,8 @@ Choose exactly one route that best matches the supplied preference.
 You must reach E. If you do not reach E within the step budget, every reward
 component is zero.
 
-Output exactly one route and no other text.
-Begin immediately with <route> and end immediately after </route>.
+First, reason briefly about the maze, and then output exactly one route.
+Begin the rote with <route> and end with </route>.
 Inside <route>...</route>, write only a space-separated sequence of:
 UP, DOWN, LEFT, RIGHT."""
 
