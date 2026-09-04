@@ -211,7 +211,7 @@ def _build_completion_mask(
     return mask
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def generate_completions(
     model: nn.Module,
     tokenizer: PreTrainedTokenizerBase,
