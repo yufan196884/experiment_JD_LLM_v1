@@ -71,6 +71,8 @@ def _model_device(
 def render_chat_prompt(
     tokenizer: PreTrainedTokenizerBase,
     messages: Sequence[ChatMessage],
+    *,
+    enable_thinking: bool = False,
 ) -> str:
     """
     Render chat messages using the checkpoint's own chat template.
@@ -87,6 +89,7 @@ def render_chat_prompt(
         list(messages),
         tokenize=False,
         add_generation_prompt=True,
+        enable_thinking=enable_thinking,
     )
 
     if not isinstance(
@@ -219,6 +222,7 @@ def generate_completions(
     temperature: float = 1.0,
     top_p: float = 1.0,
     top_k: int = 20,
+    enable_thinking: bool = False,
 ) -> GenerationBatch:
     """
     Sample `num_generations` completions for one prompt.
@@ -267,6 +271,7 @@ def generate_completions(
     rendered_prompt = render_chat_prompt(
         tokenizer,
         messages,
+        enable_thinking=enable_thinking,
     )
 
     encoded = tokenizer(

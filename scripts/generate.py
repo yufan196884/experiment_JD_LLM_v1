@@ -76,6 +76,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--thinking",
+        action="store_true",
+        help="Enable Qwen3.5 thinking mode.",
+    )
+
+    parser.add_argument(
         "--data-dir",
         type=Path,
         default=None,
@@ -357,8 +363,9 @@ def main() -> None:
         num_generations=args.num_generations,
         max_new_tokens=args.max_new_tokens,
         temperature=1.0,
-        top_p=1.0,
+        top_p=0.95 if args.thinking else 1.0,
         top_k=20,
+        enable_thinking=args.thinking,
     )
 
     # -----------------------------------------------------------------------

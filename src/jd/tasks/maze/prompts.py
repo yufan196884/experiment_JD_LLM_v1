@@ -208,7 +208,7 @@ This maze contains:
 - {len(maze.diamond_cells)} Diamond cells;
 - {len(maze.lava_cells)} Lava cells.
 
-Return exactly one route and no other text, using this format:
+After solving the maze, provide your final route using:
 
 <route>
 UP RIGHT DOWN LEFT
