@@ -51,7 +51,9 @@ from jd.tasks.maze.rewards import (
     simulate_route,
 )
 
-
+from jd.training.grpo_loss import (
+    completion_token_logprobs,
+)
 # =============================================================================
 # Single-route parsing REMOVED
 # =============================================================================
@@ -152,6 +154,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=42,
         help="Torch sampling seed.",
+    )
+
+    parser.add_argument(
+        "--score-batch-size",
+        type=int,
+        default=4,
+        help=(
+            "Micro-batch size used when forward-scoring completion token "
+            "log-probabilities. Reduce this if scoring runs out of GPU memory."
+        ),
     )
 
     return parser.parse_args()
@@ -697,6 +709,96 @@ def main() -> None:
         print(
             f"    advantage std    = {advantage_std.item():.6f}"
         )
+
+
+    print(
+        "\n"
+        + "=" * 80
+    )
+    print("OLD-POLICY TOKEN LOG-PROBABILITIES")
+    print("=" * 80)
+
+    # generate_completions() temporarily switches the model to eval() and then
+    # restores its previous mode. Re-enter eval mode for deterministic old-policy
+    # scoring so this forward pass matches the policy state used for generation.
+    was_training = bundle.model.training
+    bundle.model.eval()
+
+    try:
+        with torch.no_grad():
+            old_logprobs = completion_token_logprobs(
+                bundle.model,
+                sequences=generations.sequences,
+                full_attention_mask=generations.full_attention_mask,
+                completion_ids=generations.completion_ids,
+                completion_mask=generations.completion_mask,
+                prompt_length=generations.prompt_length,
+                micro_batch_size=args.score_batch_size,
+            ).detach()
+    finally:
+        if was_training:
+            bundle.model.train()
+
+    print("\nold_logprobs shape:", tuple(old_logprobs.shape))
+    print("requires_grad:", old_logprobs.requires_grad)
+
+    expected_logprob_shape = generations.completion_ids.shape
+    if old_logprobs.shape != expected_logprob_shape:
+        raise RuntimeError(
+            "old_logprobs must have shape [G, C]: "
+            f"expected {tuple(expected_logprob_shape)}, "
+            f"got {tuple(old_logprobs.shape)}."
+        )
+
+    masked_values = old_logprobs[
+        ~generations.completion_mask
+    ]
+    if masked_values.numel() > 0 and not torch.equal(
+        masked_values,
+        torch.zeros_like(masked_values),
+    ):
+        raise RuntimeError(
+            "Masked completion positions must have zero log-probability."
+        )
+
+    valid_logprobs = old_logprobs[
+        generations.completion_mask
+    ]
+    if not torch.isfinite(valid_logprobs).all():
+        raise RuntimeError(
+            "Found non-finite old-policy log-probabilities."
+        )
+
+    print("valid token count:", valid_logprobs.numel())
+    print("mean valid log-prob:", valid_logprobs.mean().item())
+    print("min valid log-prob: ", valid_logprobs.min().item())
+    print("max valid log-prob: ", valid_logprobs.max().item())
+
+    preview_length = min(
+        20,
+        generations.completion_ids.shape[1],
+    )
+    print(
+        "\nFirst rollout old log-probs (first "
+        f"{preview_length} completion positions):"
+    )
+    print(old_logprobs[0, :preview_length])
+
+    # Keep old_logprobs unchanged for every PPO epoch that reuses these rollouts.
+    # Later, after optimizer updates, recompute differentiable current log-probs as:
+    #
+    # current_logprobs = completion_token_logprobs(
+    #     bundle.model,
+    #     sequences=generations.sequences,
+    #     full_attention_mask=generations.full_attention_mask,
+    #     completion_ids=generations.completion_ids,
+    #     completion_mask=generations.completion_mask,
+    #     prompt_length=generations.prompt_length,
+    #     micro_batch_size=args.score_batch_size,
+    # )
+    #
+    # ratio = torch.exp(current_logprobs - old_logprobs)
+
 
     print(
         "\n"
