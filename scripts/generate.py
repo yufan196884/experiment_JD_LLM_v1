@@ -387,7 +387,7 @@ def main() -> None:
         num_generations=args.num_generations,
         max_new_tokens=args.max_new_tokens,
         temperature=1.0,
-        top_p=0.95 if args.thinking else 1.0,
+        top_p=1.0,
         top_k=0,
         enable_thinking=args.thinking,
     )
