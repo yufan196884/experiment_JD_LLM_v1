@@ -7,7 +7,6 @@ from jd.rewards.length import (
     compute_correctness_conditioned_length_reward,
 )
 
-from jd.models.generation import GenerationBatch
 
 
 def test_no_penalty_through_free_budget():
