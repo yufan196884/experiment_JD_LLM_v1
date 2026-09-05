@@ -5,7 +5,10 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from jd.training.grpo_loss import completion_token_logprobs
+from jd.training.grpo_loss import (
+    completion_token_logprobs,
+    per_objective_ppo_losses,
+)
 
 
 class NextTokenOracle(nn.Module):
@@ -90,3 +93,43 @@ def test_completion_ids_must_match_sequence_suffix():
             completion_mask=completion_mask,
             prompt_length=2,
         )
+
+
+def test_ppo_returns_one_loss_per_objective():
+    current_logprobs = torch.zeros(
+        (2, 3),
+        requires_grad=True,
+    )
+
+    old_logprobs = torch.zeros(
+        (2, 3),
+    )
+
+    completion_mask = torch.ones(
+        (2, 3),
+        dtype=torch.bool,
+    )
+
+    advantages = torch.tensor(
+        [
+            [1.0, 0.5, -0.2, 0.1, 0.8],
+            [-1.0, -0.5, 0.2, -0.1, -0.8],
+        ]
+    )
+
+    losses = per_objective_ppo_losses(
+        current_logprobs=current_logprobs,
+        old_logprobs=old_logprobs,
+        advantages=advantages,
+        completion_mask=completion_mask,
+    )
+
+    assert len(losses) == 5
+
+    for loss in losses:
+        assert loss.ndim == 0
+        assert loss.requires_grad
+
+    sum(losses).backward()
+
+    assert current_logprobs.grad is not None

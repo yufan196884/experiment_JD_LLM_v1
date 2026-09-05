@@ -54,7 +54,22 @@ class GenerationBatch:
             self.sequences.shape[0]
         )
 
+    @property
+    def completion_lengths(self) -> torch.Tensor:
+        """
+        Number of sampled completion tokens in each rollout.
 
+        Shape:
+            [G]
+
+        Includes EOS when EOS was actually sampled, matching the
+        completion-token policy-gradient mask.
+        """
+        return self.completion_mask.sum(
+            dim=-1,
+            dtype=torch.long,
+        )
+    
 def _model_device(
     model: nn.Module,
 ) -> torch.device:

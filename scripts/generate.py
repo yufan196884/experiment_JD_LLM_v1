@@ -56,6 +56,19 @@ from jd.training.grpo_loss import (
     completion_token_logprobs,
     per_objective_ppo_losses,
 )
+
+from jd.rewards.length import (
+    LENGTH_OBJECTIVE_NAME,
+    DEFAULT_LENGTH_FREE_TOKENS,
+    DEFAULT_LENGTH_SCALE_TOKENS,
+    DEFAULT_LENGTH_LOG_COEFFICIENT,
+    compute_log_length_penalty,
+)
+
+TRAINING_REWARD_NAMES = (
+    *MAZE_REWARD_NAMES,
+    LENGTH_OBJECTIVE_NAME,
+)
 # =============================================================================
 # Single-route parsing REMOVED
 # =============================================================================
@@ -140,6 +153,35 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--length-free-tokens",
+        type=int,
+        default=DEFAULT_LENGTH_FREE_TOKENS,
+        help=(
+            "No response-length penalty at or below this many "
+            "generated completion tokens."
+        ),
+    )
+
+    parser.add_argument(
+        "--length-scale-tokens",
+        type=float,
+        default=DEFAULT_LENGTH_SCALE_TOKENS,
+        help=(
+            "Horizontal scale of the logarithmic response-length penalty. "
+            "Larger values make the reward decrease more slowly."
+        ),
+    )
+
+    parser.add_argument(
+        "--length-log-coefficient",
+        type=float,
+        default=DEFAULT_LENGTH_LOG_COEFFICIENT,
+        help=(
+            "Coefficient multiplying the logarithmic response-length penalty."
+        ),
+    )
+
+    parser.add_argument(
         "--device",
         default=None,
         help="For example: cuda, cuda:0, cpu.",
@@ -202,6 +244,14 @@ def main() -> None:
     preference = validate_maze_preference(
         args.preference
     )
+
+    if args.max_new_tokens <= args.length_free_tokens:
+        print(
+            "\nWARNING: --max-new-tokens is not greater than "
+            "--length-free-tokens."
+            "\nThe response-length objective cannot activate in this run."
+            "\nUse a larger --max-new-tokens when testing the length reward."
+        )
 
     print("\nPreference vector:")
 
@@ -392,6 +442,15 @@ def main() -> None:
         enable_thinking=args.thinking,
     )
 
+    completion_lengths = generations.completion_lengths
+
+    length_rewards = compute_log_length_penalty(
+        completion_lengths,
+        free_tokens=args.length_free_tokens,
+        scale_tokens=args.length_scale_tokens,
+        coefficient=args.length_log_coefficient,
+    ).cpu()
+
     # -----------------------------------------------------------------------
     # 7. Inspect generation tensors.
     # -----------------------------------------------------------------------
@@ -500,17 +559,42 @@ def main() -> None:
                 route,
             )
 
-        reward_vector = compute_reward_vector(
+        maze_reward_vector = compute_reward_vector(
             maze,
             completion,
         )
 
+        length_reward = float(
+            length_rewards[
+                rollout_index - 1
+            ].item()
+        )
+
+        training_reward_vector = (
+            *maze_reward_vector,
+            length_reward,
+        )
+
         group_rewards.append(
-            reward_vector
+            training_reward_vector
         )
 
         print(
             "\nREWARD VECTOR [M=4]:"
+        )
+
+        num_tokens = int(
+            completion_lengths[
+                rollout_index - 1
+            ].item()
+        )
+
+        print(
+            f"\nCOMPLETION LENGTH: {num_tokens} tokens"
+        )
+
+        print(
+            f"LENGTH REWARD:     {length_reward:.6f}"
         )
 
         for reward_name, reward_value in zip(
@@ -553,7 +637,7 @@ def main() -> None:
     )
 
     for index, name in enumerate(
-        MAZE_REWARD_NAMES
+        TRAINING_REWARD_NAMES
     ):
         print(
             f"  {index}: {name}"
@@ -575,7 +659,7 @@ def main() -> None:
 
     expected_shape = (
         args.num_generations,
-        len(MAZE_REWARD_NAMES),
+        len(TRAINING_REWARD_NAMES),
     )
 
     if tuple(
@@ -641,7 +725,7 @@ def main() -> None:
     )
 
     for index, name in enumerate(
-        MAZE_REWARD_NAMES
+        TRAINING_REWARD_NAMES
     ):
         print(
             f"  {index}: {name}"
@@ -686,7 +770,7 @@ def main() -> None:
     )
 
     for reward_index, reward_name in enumerate(
-        MAZE_REWARD_NAMES
+        TRAINING_REWARD_NAMES
     ):
         raw_values = reward_tensor[
             :,
@@ -863,7 +947,7 @@ def main() -> None:
         clip_eps=args.ppo_clip_eps,
     )
 
-    expected_loss_count = len(MAZE_REWARD_NAMES)
+    expected_loss_count = len(TRAINING_REWARD_NAMES)
     if len(losses) != expected_loss_count:
         raise RuntimeError(
             "Expected one PPO loss per reward objective: "
@@ -896,7 +980,7 @@ def main() -> None:
     )
 
     for reward_name, loss in zip(
-        MAZE_REWARD_NAMES,
+        TRAINING_REWARD_NAMES,
         losses,
     ):
         print(
