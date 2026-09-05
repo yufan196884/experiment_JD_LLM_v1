@@ -499,21 +499,18 @@ def main() -> None:
     #
     # For one rollout:
     #
-    #     completion -> one route -> RewardVector [M=4]
+    #     completion
+    #         -> Maze RewardVector [4]
+    #         -> + response-length reward
+    #         -> TrainingRewardVector [M=5]
     #
     # Across the complete group:
     #
-    #     G rollouts -> reward tensor [G, M]
+    #     G rollouts -> reward tensor [G, 5]
     #
-    # With the initial training setting:
+    # With G = 8:
     #
-    #     G = 8
-    #     M = 4
-    #
-    # so:
-    #
-    #     R in R^{8 x 4}
-    #
+    #     R in R^{8 x 5}
     # -----------------------------------------------------------------------
 
     group_rewards = []
@@ -580,7 +577,7 @@ def main() -> None:
         )
 
         print(
-            "\nREWARD VECTOR [M=4]:"
+            "\nREWARD VECTOR [M=5]:"
         )
 
         num_tokens = int(
@@ -599,7 +596,7 @@ def main() -> None:
 
         for reward_name, reward_value in zip(
             MAZE_REWARD_NAMES,
-            reward_vector,
+            maze_reward_vector,
         ):
             print(
                 f"  {reward_name:16s} = {reward_value:.6f}"
