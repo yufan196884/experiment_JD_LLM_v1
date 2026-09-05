@@ -576,27 +576,11 @@ def main() -> None:
             training_reward_vector
         )
 
-        print(
-            "\nREWARD VECTOR [M=5]:"
-        )
-
-        num_tokens = int(
-            completion_lengths[
-                rollout_index - 1
-            ].item()
-        )
-
-        print(
-            f"\nCOMPLETION LENGTH: {num_tokens} tokens"
-        )
-
-        print(
-            f"LENGTH REWARD:     {length_reward:.6f}"
-        )
+        print("\nTRAINING REWARD VECTOR [M=5]:")
 
         for reward_name, reward_value in zip(
-            MAZE_REWARD_NAMES,
-            maze_reward_vector,
+            TRAINING_REWARD_NAMES,
+            training_reward_vector,
         ):
             print(
                 f"  {reward_name:16s} = {reward_value:.6f}"
